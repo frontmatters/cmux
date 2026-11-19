@@ -566,26 +566,41 @@ fn older_page_perf() {
         .collect();
     let hub = deferred_hub(std::path::Path::new(&sessions), 8 << 20);
     let last = hub.store.load(&id).unwrap().expect("the chat's meta").last_seq;
-    let filter = transcript(true);
-    for depth in depths {
-        let before = ((last as f64) * (1.0 - depth)).max(2.0) as u64;
-        for rep in 0..reps {
-            let (r0, l0, b0, t0) = (
-                read_bytes(),
-                PARSED_LINES.with(std::cell::Cell::get),
-                PARSED_BYTES.with(std::cell::Cell::get),
-                std::time::Instant::now(),
-            );
-            let page =
-                hub.events_page(&id, 0, Some(before), 2000, Some(1 << 20), true, &filter).unwrap();
-            let ms = t0.elapsed().as_secs_f64() * 1000.0;
-            println!(
-                "older page: before {before} (depth {depth}) rep {rep}: {ms:.1} ms, {} records, read {:.1} MB, parsed {} lines {:.1} MB",
-                page.events.len(),
-                (read_bytes() - r0) as f64 / 1e6,
-                PARSED_LINES.with(std::cell::Cell::get) - l0,
-                (PARSED_BYTES.with(std::cell::Cell::get) - b0) as f64 / 1e6,
-            );
+    // The pane's older page (`direct.ts` `olderPage` on a local acpmux: the transcript and the
+    // preset approval cards, bounded so superseded tool output is left out), and `transcript`
+    // alone (a remote pane's). `OLDER_PAGE_FILTER=pane` or `transcript` reads one.
+    let only = std::env::var("OLDER_PAGE_FILTER").ok();
+    let pane = EventFilter::parse(Some(&json!([
+        "transcript",
+        "preset_approval_request",
+        "preset_approval_decision"
+    ])))
+    .unwrap()
+    .omitting_superseded(true);
+    let filters = [("pane", pane), ("transcript", transcript(true))];
+    for (name, filter) in filters.iter().filter(|(n, _)| only.as_deref().is_none_or(|o| o == *n)) {
+        for &depth in &depths {
+            let before = ((last as f64) * (1.0 - depth)).max(2.0) as u64;
+            for rep in 0..reps {
+                let (r0, l0, b0, t0) = (
+                    read_bytes(),
+                    PARSED_LINES.with(std::cell::Cell::get),
+                    PARSED_BYTES.with(std::cell::Cell::get),
+                    std::time::Instant::now(),
+                );
+                let page = hub
+                    .events_page(&id, 0, Some(before), 2000, Some(1 << 20), true, filter)
+                    .unwrap();
+                let ms = t0.elapsed().as_secs_f64() * 1000.0;
+                println!(
+                    "older page ({name}): before {before} (depth {depth}) rep {rep}: {ms:.1} ms, {} records (more: {}), read {:.1} MB, parsed {} lines {:.1} MB",
+                    page.events.len(),
+                    page.has_more,
+                    (read_bytes() - r0) as f64 / 1e6,
+                    PARSED_LINES.with(std::cell::Cell::get) - l0,
+                    (PARSED_BYTES.with(std::cell::Cell::get) - b0) as f64 / 1e6,
+                );
+            }
         }
     }
 }
