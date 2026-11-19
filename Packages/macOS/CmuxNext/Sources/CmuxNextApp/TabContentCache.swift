@@ -250,8 +250,8 @@ final class TabContentCache {
         if let entry = browsers[key] { return entry }
         let profile = profile ?? browserProfile?(key) ?? .default
         if let page = MachineBrowserPages(cache: self).page(key: key, url: url, profile: profile) { return install(page, for: key) }
-        let tab = webKit.makeWebKitTab(id: BrowserTabID(rawValue: key), profile: profile, initialURL: pageRequests.staysOffThisMacLocalhost(key) ? nil : url)
-        return install(tab, for: key)
+        let tab = BenchSpans.measure("wk.make") { webKit.makeWebKitTab(id: BrowserTabID(rawValue: key), profile: profile, initialURL: pageRequests.staysOffThisMacLocalhost(key) ? nil : url) }
+        return BenchSpans.measure("wk.install") { install(tab, for: key) }
     }
 
     func existingBrowser(_ key: String) -> BrowserEntry? { browsers[key] }
@@ -293,7 +293,7 @@ final class TabContentCache {
             if crashedPages.contains(key), !startedDeferred.contains(key) { return deferred(tab, url: url) }
             onRestoredPageStart?(key)
         }
-        guard tab.browserEngine == BrowserEngineTag.cef.rawValue else { return tracked(browserTabs.historyStarts.page(tab, url: url, cache: self) ?? browser(for: key, url: url), tab) }
+        guard tab.browserEngine == BrowserEngineTag.cef.rawValue else { let made = BenchSpans.measure("wk.historyStart") { browserTabs.historyStarts.page(tab, url: url, cache: self) } ?? browser(for: key, url: url); return BenchSpans.measure("wk.tracked") { tracked(made, tab) } }
         if let reason = browserTabs.cefUnavailable() { return chromiumUnavailable(tab, url: url, reason: reason) }
         if !pendingBrowsers.contains(key), let page = ChromiumNewTabNow(cache: self).page(tab, url: url) { return tracked(install(page, for: key), tab) }
         guard pendingBrowsers.insert(key).inserted, cef.notePoint("page_task") else { return nil }
@@ -413,10 +413,10 @@ final class TabContentCache {
         if page.engineKind == .cef { page.keyRouter = keyRouter }
         (page as? CEFTab)?.devToolsObserver = self
         let incognito = cef.stores.offTheRecord.isOffTheRecord(page.profileID) ? incognitoMemory : nil
-        let entry = BrowserEntry(tab: page, suggestionEngine: suggestionEngine(forPage: page),
-                                 history: incognito?.history ?? history(for: page.profileID))
-        pageRequests.routeOmnibarOpens(of: entry.state, page: page)
-        mount(entry, as: key)
+        let engine = BenchSpans.measure("wk.suggest") { suggestionEngine(forPage: page) }, pageHistory = BenchSpans.measure("wk.history") { incognito?.history ?? history(for: page.profileID) }
+        let entry = BenchSpans.measure("wk.entry") { BrowserEntry(tab: page, suggestionEngine: engine, history: pageHistory) }
+        BenchSpans.measure("wk.routeOpens") { pageRequests.routeOmnibarOpens(of: entry.state, page: page) }
+        BenchSpans.measure("wk.mount") { mount(entry, as: key) }
         return entry
     }
 
