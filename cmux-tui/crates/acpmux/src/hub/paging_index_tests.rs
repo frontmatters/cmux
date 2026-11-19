@@ -548,25 +548,59 @@ fn scrolling_a_chat_back_to_its_start_reads_each_page_not_the_log() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// An older page of a large generated Codex-shaped log, read three ways at several depths: as
-/// before the index (`READ_THE_OLD_WAY`), on the first read of segments with no index (each read
-/// indexes what it passes), and through the index. `cargo test -p acpmux --release -- --ignored
-/// --nocapture older_page_synthetic_perf`; `SYNTH_PAGE_MB` sets the log's size (default 1024).
-/// Per 100 records: 1 reply, 1 tool call update of 2 KB, 49 load replays and 49 raw harness lines
-/// of 14 KB, about the real chat's split.
+/// Drops `dir`'s files from the page cache, so the next read of them is a cold one.
+fn evict(dir: &Path) {
+    #[cfg(target_os = "linux")]
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if let Ok(file) = std::fs::File::open(entry.path()) {
+            use std::os::fd::AsRawFd;
+            // SAFETY: a valid descriptor this function holds open; advice changes no memory.
+            unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = dir;
+}
+
+/// The web pane's older page exactly as it asks for it on a local acpmux (`direct.ts`
+/// `olderPage`, `_acpmux/events` in `server/requests/events.rs`): the transcript and the preset
+/// approval cards, `limit` 2,000 (`OLDER_PAGE_RECORDS`), `maxBytes` 1 MiB (`OLDER_PAGE_BYTES`,
+/// which also leaves superseded tool output out), newest first before a seq.
+fn pane_filter() -> EventFilter {
+    EventFilter::parse(Some(&json!([
+        "transcript",
+        "preset_approval_request",
+        "preset_approval_decision"
+    ])))
+    .unwrap()
+    .omitting_superseded(true)
+}
+
+/// The pane's older page (`pane_filter`) of a large generated Codex-shaped log at several
+/// depths: as before the index (`READ_THE_OLD_WAY`), on the first read of a log with no index
+/// (which indexes the segments it reads in), on the next read, and through the index the log was
+/// written with; warm, and cold (the log and its index dropped from the page cache first). Per
+/// 100 records: a reply, a tool call update of 2 KB, a preset card every 1,000, and 14 KB load
+/// replays and raw harness lines for the rest (about a long Codex chat's split). `cargo test -p
+/// acpmux --release -- --ignored --nocapture older_page_synthetic_perf`; `SYNTH_PAGE_MB` sets the
+/// log's size (default 1024).
 #[test]
 #[ignore = "a measurement, not a check"]
 fn older_page_synthetic_perf() {
     let mb: u64 = std::env::var("SYNTH_PAGE_MB").ok().and_then(|v| v.parse().ok()).unwrap_or(1024);
     let root = temp_root("transcript-index-synthetic");
-    let sessions = root.join("sessions");
     let payload = "x".repeat(14 << 10);
     let records = mb * (1 << 20) / (14 << 10);
-    {
-        let writer = LocalStore::new(sessions.clone(), 8 << 20).unwrap();
+    let write = |sessions: &Path, indexed: bool| {
+        let writer = LocalStore::new(sessions.to_path_buf(), 8 << 20).unwrap();
+        let writer = if indexed { writer } else { writer.without_transcript_index() };
         writer.save(&meta("c")).unwrap();
         for seq in 1..=records {
             let mut rec = match seq % 100 {
+                0 if seq % 1000 == 0 => mux(
+                    "preset_approval_request",
+                    json!({"preset": format!("p{seq}"), "digest": "d"}),
+                ),
                 0 => agent(
                     0,
                     "agent_message_chunk",
@@ -588,16 +622,24 @@ fn older_page_synthetic_perf() {
             writer.append("c", &rec).unwrap();
         }
         writer.flush().unwrap();
-    }
+    };
+    let legacy = root.join("legacy");
+    let written = root.join("written");
+    write(&legacy, false);
+    write(&written, true);
     let log_bytes: u64 =
-        segment_files(&sessions).iter().map(|p| std::fs::metadata(p).unwrap().len()).sum();
+        segment_files(&legacy).iter().map(|p| std::fs::metadata(p).unwrap().len()).sum();
     println!(
         "synthetic log: {records} records, {:.0} MB in {} segments",
         log_bytes as f64 / 1e6,
-        segment_files(&sessions).len()
+        segment_files(&legacy).len()
     );
-    let filter = transcript(true);
-    let read = |hub: &Hub, label: &str, depth: f64| {
+    let filter = pane_filter();
+    let read = |hub: &Hub, sessions: &Path, label: &str, depth: f64, cold: bool| {
+        if cold {
+            evict(&sessions.join("c").join("events"));
+            evict(&index_dir(sessions));
+        }
         let before = ((records as f64) * (1.0 - depth)).max(2.0) as u64;
         let (r0, b0, t0) =
             (read_bytes(), PARSED_BYTES.with(std::cell::Cell::get), std::time::Instant::now());
@@ -607,46 +649,30 @@ fn older_page_synthetic_perf() {
         let own: u64 =
             page.events.iter().map(|r| serde_json::to_vec(r).unwrap().len() as u64).sum();
         println!(
-            "SYNTH {label} depth {depth}: {ms:.1} ms, {} records ({:.2} MB), read {:.1} MB, parsed {:.2} MB",
+            "SYNTH {label} {} depth {depth}: {ms:.1} ms, {} records ({:.2} MB, more {}), read {:.1} MB, parsed {:.2} MB",
+            if cold { "cold" } else { "warm" },
             page.events.len(),
             own as f64 / 1e6,
+            page.has_more,
             (read_bytes() - r0) as f64 / 1e6,
             (PARSED_BYTES.with(std::cell::Cell::get) - b0) as f64 / 1e6,
         );
+        page.events
     };
     let depths = [0.02, 0.25, 0.5, 0.9];
-    let index = index_dir(&sessions);
-    let hub = deferred_hub(&sessions, 8 << 20);
-    super::READ_THE_OLD_WAY.with(|old| old.set(true));
-    for depth in depths {
-        read(&hub, "before", depth);
-    }
-    super::READ_THE_OLD_WAY.with(|old| old.set(false));
-    for depth in depths {
-        let _ = std::fs::remove_dir_all(&index);
-        read(&hub, "first read (no index)", depth);
-    }
-    // Every segment indexed by the reads above passing over it; then read again.
-    for depth in depths {
-        read(&hub, "indexed (by reads)", depth);
-    }
-    // Indexed as written: the log written again by a store with the index.
-    let again = root.join("again");
-    {
-        let reader = LocalStore::new(sessions.clone(), 8 << 20).unwrap();
-        let writer = LocalStore::new(again.clone(), 8 << 20).unwrap();
-        writer.save(&meta("c")).unwrap();
-        reader
-            .scan("c", 0, &mut |rec| {
-                writer.append("c", &rec).unwrap();
-                true
-            })
-            .unwrap();
-        writer.flush().unwrap();
-    }
-    let hub = deferred_hub(&again, 8 << 20);
-    for depth in depths {
-        read(&hub, "indexed (as written)", depth);
+    let hub = deferred_hub(&legacy, 8 << 20);
+    let indexed_hub = deferred_hub(&written, 8 << 20);
+    for cold in [false, true] {
+        for depth in depths {
+            super::READ_THE_OLD_WAY.with(|old| old.set(true));
+            let want = read(&hub, &legacy, "before", depth, cold);
+            super::READ_THE_OLD_WAY.with(|old| old.set(false));
+            let _ = std::fs::remove_dir_all(index_dir(&legacy));
+            assert_eq!(read(&hub, &legacy, "first read", depth, cold), want);
+            assert_eq!(read(&hub, &legacy, "next read", depth, cold), want);
+            let got = read(&indexed_hub, &written, "indexed as written", depth, cold);
+            assert_eq!(got, want);
+        }
     }
     let _ = std::fs::remove_dir_all(&root);
 }
