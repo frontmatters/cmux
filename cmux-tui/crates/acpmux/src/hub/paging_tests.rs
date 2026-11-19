@@ -548,10 +548,14 @@ fn an_older_transcript_page_costs_its_records_not_the_log_it_skips() {
 /// folder: `OLDER_PAGE_SESSIONS=<dir holding the chat's folder> OLDER_PAGE_ID=<chat id>
 /// [OLDER_PAGE_DEPTHS=0.02,0.5] cargo test -p acpmux --release -- --ignored --nocapture
 /// older_page_perf`. Evict the copy from the page cache first for a cold read.
+/// `OLDER_PAGE_OLD_WAY=1` reads as before the transcript index (`store/transcript_index.rs`).
 #[test]
 #[ignore = "a measurement, not a check"]
 fn older_page_perf() {
     let Ok(sessions) = std::env::var("OLDER_PAGE_SESSIONS") else { return };
+    if std::env::var_os("OLDER_PAGE_OLD_WAY").is_some() {
+        super::READ_THE_OLD_WAY.with(|old| old.set(true));
+    }
     let id = std::env::var("OLDER_PAGE_ID").expect("OLDER_PAGE_ID");
     let reps: usize =
         std::env::var("OLDER_PAGE_REPS").ok().and_then(|v| v.parse().ok()).unwrap_or(3);

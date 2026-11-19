@@ -526,3 +526,106 @@ fn scrolling_a_chat_back_to_its_start_reads_each_page_not_the_log() {
     assert!(pages > 3, "{pages} pages");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// An older page of a large generated Codex-shaped log, read three ways at several depths: as
+/// before the index (`READ_THE_OLD_WAY`), on the first read of segments with no index (each read
+/// indexes what it passes), and through the index. `cargo test -p acpmux --release -- --ignored
+/// --nocapture older_page_synthetic_perf`; `SYNTH_PAGE_MB` sets the log's size (default 1024).
+/// Per 100 records: 1 reply, 1 tool call update of 2 KB, 49 load replays and 49 raw harness lines
+/// of 14 KB, about the real chat's split.
+#[test]
+#[ignore = "a measurement, not a check"]
+fn older_page_synthetic_perf() {
+    let mb: u64 = std::env::var("SYNTH_PAGE_MB").ok().and_then(|v| v.parse().ok()).unwrap_or(1024);
+    let root = temp_root("transcript-index-synthetic");
+    let sessions = root.join("sessions");
+    let payload = "x".repeat(14 << 10);
+    let records = mb * (1 << 20) / (14 << 10);
+    {
+        let writer = LocalStore::new(sessions.clone(), 8 << 20).unwrap();
+        writer.save(&meta("c")).unwrap();
+        for seq in 1..=records {
+            let mut rec = match seq % 100 {
+                0 => agent(
+                    0,
+                    "agent_message_chunk",
+                    json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": format!("reply {seq} {}", "w".repeat(300))}}),
+                ),
+                1 => agent(
+                    0,
+                    "tool_call_update",
+                    json!({"sessionUpdate": "tool_call_update", "toolCallId": format!("t{seq}"), "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "o".repeat(2000)}}]}),
+                ),
+                n if n % 2 == 0 => raw("codex.response", payload.len()),
+                _ => agent(
+                    0,
+                    "tool_call.replay",
+                    json!({"sessionUpdate": "tool_call", "toolCallId": format!("r{seq}"), "title": payload}),
+                ),
+            };
+            rec.seq = seq;
+            writer.append("c", &rec).unwrap();
+        }
+        writer.flush().unwrap();
+    }
+    let log_bytes: u64 =
+        segment_files(&sessions).iter().map(|p| std::fs::metadata(p).unwrap().len()).sum();
+    println!(
+        "synthetic log: {records} records, {:.0} MB in {} segments",
+        log_bytes as f64 / 1e6,
+        segment_files(&sessions).len()
+    );
+    let filter = transcript(true);
+    let read = |hub: &Hub, label: &str, depth: f64| {
+        let before = ((records as f64) * (1.0 - depth)).max(2.0) as u64;
+        let (r0, b0, t0) =
+            (read_bytes(), PARSED_BYTES.with(std::cell::Cell::get), std::time::Instant::now());
+        let page =
+            hub.events_page("c", 0, Some(before), 2000, Some(1 << 20), true, &filter).unwrap();
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let own: u64 =
+            page.events.iter().map(|r| serde_json::to_vec(r).unwrap().len() as u64).sum();
+        println!(
+            "SYNTH {label} depth {depth}: {ms:.1} ms, {} records ({:.2} MB), read {:.1} MB, parsed {:.2} MB",
+            page.events.len(),
+            own as f64 / 1e6,
+            (read_bytes() - r0) as f64 / 1e6,
+            (PARSED_BYTES.with(std::cell::Cell::get) - b0) as f64 / 1e6,
+        );
+    };
+    let depths = [0.02, 0.25, 0.5, 0.9];
+    let index = index_dir(&sessions);
+    let hub = deferred_hub(&sessions, 8 << 20);
+    super::READ_THE_OLD_WAY.with(|old| old.set(true));
+    for depth in depths {
+        read(&hub, "before", depth);
+    }
+    super::READ_THE_OLD_WAY.with(|old| old.set(false));
+    for depth in depths {
+        let _ = std::fs::remove_dir_all(&index);
+        read(&hub, "first read (no index)", depth);
+    }
+    // Every segment indexed by the reads above passing over it; then read again.
+    for depth in depths {
+        read(&hub, "indexed (by reads)", depth);
+    }
+    // Indexed as written: the log written again by a store with the index.
+    let again = root.join("again");
+    {
+        let reader = LocalStore::new(sessions.clone(), 8 << 20).unwrap();
+        let writer = LocalStore::new(again.clone(), 8 << 20).unwrap();
+        writer.save(&meta("c")).unwrap();
+        reader
+            .scan("c", 0, &mut |rec| {
+                writer.append("c", &rec).unwrap();
+                true
+            })
+            .unwrap();
+        writer.flush().unwrap();
+    }
+    let hub = deferred_hub(&again, 8 << 20);
+    for depth in depths {
+        read(&hub, "indexed (as written)", depth);
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
