@@ -246,12 +246,12 @@ final class TabContentCache {
 
     // MARK: Browsers
 
-    func browser(for key: String, url: URL?, profile: BrowserProfileID? = nil) -> BrowserEntry {
+    func browser(for key: String, url: URL?, profile: BrowserProfileID? = nil, loadsAfterFrame: Bool = false) -> BrowserEntry {
         if let entry = browsers[key] { return entry }
         let profile = profile ?? browserProfile?(key) ?? .default
         if let page = MachineBrowserPages(cache: self).page(key: key, url: url, profile: profile) { return install(page, for: key) }
-        let tab = BenchSpans.measure("wk.make") { webKit.makeWebKitTab(id: BrowserTabID(rawValue: key), profile: profile, initialURL: pageRequests.staysOffThisMacLocalhost(key) ? nil : url) }
-        return BenchSpans.measure("wk.install") { install(tab, for: key) }
+        let start = pageRequests.staysOffThisMacLocalhost(key) ? nil : url, tab = BenchSpans.measure("wk.make") { webKit.makeWebKitTab(id: BrowserTabID(rawValue: key), profile: profile, initialURL: loadsAfterFrame ? nil : start) }, entry = BenchSpans.measure("wk.install") { install(tab, for: key) }
+        return (loadsAfterFrame ? start : nil).map { url in afterFrame { [weak tab] in BenchSpans.measure("wk.load") { tab?.load(url) } } }.map { _ in entry } ?? entry
     }
 
     func existingBrowser(_ key: String) -> BrowserEntry? { browsers[key] }
@@ -293,7 +293,7 @@ final class TabContentCache {
             if crashedPages.contains(key), !startedDeferred.contains(key) { return deferred(tab, url: url) }
             onRestoredPageStart?(key)
         }
-        guard tab.browserEngine == BrowserEngineTag.cef.rawValue else { let made = BenchSpans.measure("wk.historyStart") { browserTabs.historyStarts.page(tab, url: url, cache: self) } ?? browser(for: key, url: url); return BenchSpans.measure("wk.tracked") { tracked(made, tab) } }
+        guard tab.browserEngine == BrowserEngineTag.cef.rawValue else { let made = BenchSpans.measure("wk.historyStart") { browserTabs.historyStarts.page(tab, url: url, cache: self) } ?? browser(for: key, url: url, loadsAfterFrame: ProvisionalTab.isProvisional(surface: tab.surface)); return BenchSpans.measure("wk.tracked") { tracked(made, tab) } }
         if let reason = browserTabs.cefUnavailable() { return chromiumUnavailable(tab, url: url, reason: reason) }
         if !pendingBrowsers.contains(key), let page = ChromiumNewTabNow(cache: self).page(tab, url: url) { return tracked(install(page, for: key), tab) }
         guard pendingBrowsers.insert(key).inserted, cef.notePoint("page_task") else { return nil }
