@@ -1029,7 +1029,11 @@ extension WorkspaceHoverCardView: HoverCardSizeReporting {
         }
     }
 
-    var largestFittingSize: CGSize? { nil } // red stub
+    var largestFittingSize: CGSize? {
+        guard customView == nil, customError.stringValue.isEmpty, let shown = sizeCache[detailsExpanded] else { return nil }
+        let other = detailsToggle.isHidden ? shown : sizeCache[!detailsExpanded] ?? shown
+        return CGSize(width: max(shown.width, other.width), height: max(shown.height, other.height))
+    }
 }
 
 extension WorkspaceHoverCardView {

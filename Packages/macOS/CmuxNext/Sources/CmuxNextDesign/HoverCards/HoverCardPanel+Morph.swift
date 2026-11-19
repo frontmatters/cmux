@@ -165,13 +165,23 @@ extension HoverCardPanel {
         let morph = HoverCardMorph(panel: self, corner: corner, generation: Self.morphGeneration, from: previous.size, to: rest.size,
                                    spring: spring, holdsLayout: holds)
         activeMorph = morph
+        // A change of the same card's size that fits the room its window holds (`holdsRoom`) keeps the window: no new
+        // window surface, the frame the press came in was late when it had one (Lawrence 2026-11-18).
+        let window = bigFrame.insetBy(dx: -margin, dy: -margin)
+        let keepsWindow = folds && travel == Self.travel && frame.contains(window)
+        morphRoom = keepsWindow ? bigFrame.offsetBy(dx: -frame.minX, dy: -frame.minY)
+            : CGRect(x: margin, y: margin, width: big.width, height: big.height)
+        morphKeepsRoom = folds
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         // The card's first frame, in the host the window is about to be, before the window takes that frame: its one
         // layout is then at the size it shows (not first at the whole larger card, then again at the morph's size).
-        host.cardRect = morphCardRect(in: CGRect(x: margin, y: margin, width: big.width, height: big.height))
-        host.travelMargin = travel
-        setFrame(bigFrame.insetBy(dx: -margin, dy: -margin), display: false)
+        host.cardRect = morphCardRect(in: morphRoom)
+        if !keepsWindow {
+            host.travelMargin = travel
+            setFrame(window, display: false)
+        }
+        holdsRoom = keepsWindow
         applyMorphFrame()
         CATransaction.commit()
         slide(from: offset)
@@ -183,7 +193,7 @@ extension HoverCardPanel {
     /// pixels, so its edge stays crisp), about the fixed corner of the larger card the window holds.
     func applyMorphFrame() {
         guard activeMorph != nil, let host else { return }
-        host.cardRect = morphCardRect(in: host.restingCardRect)
+        host.cardRect = morphCardRect(in: morphRoom)
         // The body moves with the corner it is pinned to in this same commit (its size does not change).
         host.layoutSubtreeIfNeeded()
     }
@@ -226,11 +236,20 @@ extension HoverCardPanel {
         NSLayoutConstraint.deactivate(sizeConstraints)
         NSLayoutConstraint.activate(edgeConstraints)
         let margin = Self.windowMargin
+        let restWindow = restCardFrame.insetBy(dx: -margin, dy: -margin)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        host?.cardRect = nil
-        host?.travelMargin = Self.travel
-        setFrame(restCardFrame.insetBy(dx: -margin, dy: -margin), display: true)
+        // A size change of the same card (a refit) leaves the larger window it ran in: the card rests inside it, and
+        // the next Show or Hide details sets no window frame. Anything else takes the window to the card's own frame.
+        if morphKeepsRoom, isShowingCard, frame.contains(restWindow), frame != restWindow {
+            holdsRoom = true
+            host?.cardRect = restCardFrame.offsetBy(dx: -frame.minX, dy: -frame.minY)
+        } else {
+            holdsRoom = false
+            host?.cardRect = nil
+            host?.travelMargin = Self.travel
+            setFrame(restWindow, display: true)
+        }
         host?.layoutSubtreeIfNeeded()
         CATransaction.commit()
         // A settled morph (not one a newer show or a hide ended): what changed while it ran takes its place now.
@@ -250,9 +269,31 @@ extension HoverCardPanel {
         AfterFrameCommit().run { [weak self] in
             guard let self, self.activeMorph == nil, self.isShowingCard, let body = self.body as? HoverCardSizeReporting else { return }
             body.prepareSizes()
+            self.keepRoom(for: body.largestFittingSize)
         }
     }
 
-    /// The window keeps room for the card's largest state (red stub).
-    func keepRoom(for largest: CGSize?) {}
+    /// The window takes, while the card rests, the room the card's largest state asks for about its fixed corner, so
+    /// the press that changes to it sets no window frame (it changes `PopupHostView.cardRect` alone). Nothing moves
+    /// on screen: the card stays where it is in the larger window, which is clear and passes the pointer.
+    func keepRoom(for largest: CGSize?) {
+        guard let largest, let host, activeMorph == nil, leavingBody == nil else { return }
+        let rest = restCardFrame
+        guard largest.width > rest.width + 0.5 || largest.height > rest.height + 0.5 else { return }
+        let corner = fixedCorner
+        let big = CGSize(width: max(largest.width, rest.width), height: max(largest.height, rest.height))
+        let room = CGRect(x: corner.x == 0 ? rest.minX : rest.maxX - big.width,
+                          y: corner.y == 0 ? rest.minY : rest.maxY - big.height, width: big.width, height: big.height)
+        let margin = Self.windowMargin
+        let window = room.insetBy(dx: -margin, dy: -margin)
+        guard !frame.contains(window) else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        host.travelMargin = Self.travel
+        host.cardRect = rest.offsetBy(dx: -window.minX, dy: -window.minY)
+        setFrame(window, display: true)
+        holdsRoom = true
+        host.layoutSubtreeIfNeeded()
+        CATransaction.commit()
+    }
 }

@@ -152,7 +152,18 @@ final class HoverCardPanel: NSPanel {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
     /// The card's frame on screen at rest: the window less its clear band.
-    var cardFrame: CGRect { activeMorph == nil ? frame.insetBy(dx: Self.windowMargin, dy: Self.windowMargin) : restCardFrame }
+    var cardFrame: CGRect {
+        activeMorph == nil && !holdsRoom ? frame.insetBy(dx: Self.windowMargin, dy: Self.windowMargin) : restCardFrame
+    }
+
+    /// The window is larger than the card at rest: it keeps the room a change of the card's size takes (Show details
+    /// and Hide details), and the card sits in it at `restCardFrame` (`PopupHostView.cardRect`). A window set to
+    /// another size is a new surface for the window server, and the frame it came in was late (Lawrence 2026-11-18).
+    var holdsRoom = false
+    /// The larger card's rect in the host while a morph runs: the size the morph's frames resize the card inside.
+    var morphRoom: CGRect = .zero
+    /// The morph in flight changes the same card's size (a refit): when it ends, the window keeps its room.
+    var morphKeepsRoom = false
 
     /// Where the card is drawn now: its rest frame (at the size a morph in flight shows) moved
     /// by the slide in flight.
@@ -437,6 +448,8 @@ final class HoverCardPanel: NSPanel {
     /// The window at the card's rest frame plus its clear band.
     func applyRestFrame() {
         let margin = Self.windowMargin
+        holdsRoom = false
+        host?.cardRect = nil
         setFrame(restCardFrame.insetBy(dx: -margin, dy: -margin), display: true)
     }
 
