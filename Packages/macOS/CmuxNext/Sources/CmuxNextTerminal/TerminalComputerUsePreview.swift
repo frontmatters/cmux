@@ -118,7 +118,7 @@ public final class TerminalComputerUsePreview: NSView {
         closeButton.layer?.cornerRadius = 9 // radius-allow: an 18 pt circle (bezelStyle .circular) floating over the window preview, not a toolbar button
         closeButton.target = self
         closeButton.action = #selector(close)
-        closeButton.setAccessibilityLabel(String(localized: "terminal.computerUsePreview.close", defaultValue: "Hide Preview", bundle: .module))
+        closeButton.setAccessibilityLabel(String(localized: "terminal.computerUsePreview.close", defaultValue: "Hide Preview", bundle: .l10n))
         addSubview(closeButton)
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
@@ -250,12 +250,12 @@ public final class TerminalComputerUsePreview: NSView {
         let app = card.app.trimmingCharacters(in: .whitespaces)
         if card.done {
             return app.isEmpty
-                ? String(localized: "terminal.computerUsePreview.doneNoApp", defaultValue: "App preview, done", bundle: .module)
-                : String(localized: "terminal.computerUsePreview.done", defaultValue: "\(app), done", bundle: .module)
+                ? String(localized: "terminal.computerUsePreview.doneNoApp", defaultValue: "App preview, done", bundle: .l10n)
+                : String(localized: "terminal.computerUsePreview.done", defaultValue: "\(app), done", bundle: .l10n)
         }
         return app.isEmpty
-            ? String(localized: "terminal.computerUsePreview.runningNoApp", defaultValue: "Live app preview", bundle: .module)
-            : String(localized: "terminal.computerUsePreview.running", defaultValue: "\(app), live", bundle: .module)
+            ? String(localized: "terminal.computerUsePreview.runningNoApp", defaultValue: "Live app preview", bundle: .l10n)
+            : String(localized: "terminal.computerUsePreview.running", defaultValue: "\(app), live", bundle: .l10n)
     }
 
     /// The agent cursor's arrow (the worker's cursor shape, small), tip at the layer's origin.
