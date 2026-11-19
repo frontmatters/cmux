@@ -139,7 +139,7 @@ struct DogfoodReadiness {
             git_sha: info["CmuxMobileSourceCommit"] as? String ?? "",
             api_base_url: apiBase.absoluteString,
             cloud_backend: cloudBackend,
-            build_space: "",  // red: not reported yet
+            build_space: buildSpace,
             account_email: email.lowercased(),
             user_id: userID,
             signed_in: true,
@@ -160,7 +160,7 @@ struct DogfoodReadiness {
             git_sha: info["CmuxMobileSourceCommit"] as? String ?? "",
             api_base_url: apiBase?.absoluteString ?? "",
             cloud_backend: cloudBackend,
-            build_space: "",  // red: not reported yet
+            build_space: buildSpace,
             account_email: "",
             user_id: "",
             signed_in: false,
