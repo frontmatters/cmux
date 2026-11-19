@@ -1028,6 +1028,8 @@ extension WorkspaceHoverCardView: HoverCardSizeReporting {
             sizeCache[expanded] = measure(expanded: expanded)
         }
     }
+
+    var largestFittingSize: CGSize? { nil } // red stub
 }
 
 extension WorkspaceHoverCardView {

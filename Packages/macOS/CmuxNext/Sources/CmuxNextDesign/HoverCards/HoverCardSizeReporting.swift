@@ -10,4 +10,6 @@ public protocol HoverCardSizeReporting: AnyObject {
     /// The card rests: the body may measure the sizes a next change will ask for (after this frame's commit, off any
     /// press).
     func prepareSizes()
+    /// The largest size the body's states ask for (red stub).
+    var largestFittingSize: CGSize? { get }
 }

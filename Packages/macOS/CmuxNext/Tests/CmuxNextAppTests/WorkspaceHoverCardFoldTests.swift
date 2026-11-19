@@ -231,6 +231,39 @@ import Testing
         #expect(f.card.reportedFittingSize == f.card.fittingSize, "after a content change the card reports \(String(describing: f.card.reportedFittingSize)), a measure gives \(f.card.fittingSize)")
     }
 
+    /// Lawrence 2026-11-18 ("trace the late frames"): a details press set the card's window to another size (the larger
+    /// card's, then the card's own when the resize ended), and a window at a new size is a new surface for the window
+    /// server. The window now keeps the room the card's larger state takes while the card shows: Show details and Hide
+    /// details change the card's rect inside it, never the window's frame, and the card rests where it rested.
+    @Test func aDetailsPressKeepsTheCardsWindowFrame() throws {
+        Motion.reduceMotionOverride = false
+        defer { Motion.reduceMotionOverride = nil }
+        let f = try Self.fixture()
+        defer { f.tearDown() }
+        f.card.prepareSizes()
+        f.panel.keepRoom(for: f.card.largestFittingSize)
+        let window = f.panel.frame
+        let collapsed = f.panel.cardFrame
+        #expect(f.surface.offsetBy(dx: window.minX, dy: window.minY) == collapsed, "the card moved when its window took the room")
+
+        Self.press(f)
+        try #require(f.panel.activeMorph != nil, "Show details did not resize the card")
+        #expect(f.panel.frame == window, "Show details set the card's window to another frame")
+        Self.settle(f.panel)
+        #expect(f.panel.frame == window, "the end of Show details set the card's window to another frame")
+        #expect(f.surface.offsetBy(dx: window.minX, dy: window.minY) == f.panel.cardFrame, "the card does not rest where it is placed")
+        f.card.prepareSizes()
+        f.panel.keepRoom(for: f.card.largestFittingSize)
+
+        Self.press(f)
+        try #require(f.panel.activeMorph != nil, "Hide details did not fold the card")
+        #expect(f.panel.frame == window, "Hide details set the card's window to another frame")
+        Self.settle(f.panel)
+        #expect(f.panel.frame == window, "the end of Hide details set the card's window to another frame")
+        #expect(f.panel.cardFrame == collapsed, "the card did not come back to where it rested")
+        #expect(f.surface.offsetBy(dx: window.minX, dy: window.minY) == collapsed, "the card does not rest where it is placed")
+    }
+
     @Test func underReduceMotionDetailsChangeTheCardAtOnce() throws {
         Motion.reduceMotionOverride = true
         defer { Motion.reduceMotionOverride = nil }

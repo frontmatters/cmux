@@ -252,4 +252,7 @@ extension HoverCardPanel {
             body.prepareSizes()
         }
     }
+
+    /// The window keeps room for the card's largest state (red stub).
+    func keepRoom(for largest: CGSize?) {}
 }
