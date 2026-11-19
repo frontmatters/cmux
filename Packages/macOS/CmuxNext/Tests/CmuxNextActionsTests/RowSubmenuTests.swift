@@ -21,7 +21,7 @@ struct RowSubmenuTests {
         let registry = registry()
         let target = ActionTargetRef(kind: .pane, id: "p1")
         var asked: [ActionTargetRef?] = []
-        registry.rowSubmenus["macScreen.open"] = { target, _ in
+        ActionRowSubmenus.of(registry)["macScreen.open"] = { target, _ in
             asked.append(target)
             let menu = NSMenu()
             menu.addItem(withTitle: "cosmic-gray", action: nil, keyEquivalent: "")
@@ -35,7 +35,7 @@ struct RowSubmenuTests {
 
     @Test func withoutASubmenuTheRowStaysPlain() throws {
         let registry = registry()
-        registry.rowSubmenus["macScreen.open"] = { _, _ in nil }
+        ActionRowSubmenus.of(registry)["macScreen.open"] = { _, _ in nil }
         let row = try #require(screenRow(registry.makeContextMenu(for: .newTab)))
         #expect(row.submenu == nil)
     }

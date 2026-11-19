@@ -32,7 +32,7 @@ public struct MacScreenActions {
     public func bind(into registry: ActionRegistry, paletteRows: ((AsyncPaletteProvider) -> Void)? = nil) {
         paletteRows?(pages.paletteProvider(registry: registry))
         // Screen Sharing ▸: the machines to view, one click each (MacScreenPickerMenu).
-        registry.rowSubmenus["macScreen.open"] = { [weak registry] target, machineID in
+        ActionRowSubmenus.of(registry)["macScreen.open"] = { [weak registry] target, machineID in
             guard let registry else { return nil }
             return MacScreenPickerMenu(pages: pages, registry: registry).menu(target: target, machineID: machineID)
         }
