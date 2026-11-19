@@ -861,14 +861,19 @@ impl LocalStore {
                 Some(kept) => read_indexed(&mut file, stamp.len, &kept, before, &mut line, &done)?,
                 None => {
                     let end = offset_of_seq(&mut file, before)?;
-                    // The segment still written to is indexed by its writer.
-                    let mut made =
-                        (Some(index) != last && stamp.id.2 != 0 && end >= stamp.len).then(Vec::new);
+                    // The segment still written to is indexed by its writer; any other is
+                    // indexed by this read: the lines it visits, then (once the page is full) the
+                    // rest of the segment, its heads only. At most one segment more than the read
+                    // takes, once: a page that stops in a segment no longer reads it the old way
+                    // on every scroll.
+                    let mut made = (Some(index) != last && stamp.id.2 != 0).then(Vec::new);
+                    let mut stop = end;
+                    // A last line with no newline is a torn append: no index is made of it.
+                    let mut torn = false;
                     for_each_line_rev_at(&mut file, 0, end, &mut |offset, text| {
-                        // A line with no newline is a torn append: no index is made of it.
-                        if offset + text.len() as u64 >= end {
-                            made = None;
-                        } else if let Some(entries) = made.as_mut()
+                        stop = offset;
+                        torn |= offset + text.len() as u64 >= stamp.len;
+                        if let Some(entries) = made.as_mut()
                             && holds_line(text)
                             && let Some(entry) = Entry::of(text, offset)
                         {
@@ -876,10 +881,30 @@ impl LocalStore {
                         }
                         line(text)
                     })?;
-                    if !done.get()
-                        && let Some(entries) = made
-                    {
-                        self.write_read_index(id, index, &path, &stamp, entries);
+                    if let Some(mut entries) = made.filter(|_| !torn) {
+                        let mut collect = |into: &mut Vec<Entry>, from: u64, to: u64| {
+                            for_each_line_rev_at(&mut file, from, to, &mut |offset, text| {
+                                if offset + text.len() as u64 >= stamp.len {
+                                    torn = true;
+                                    return false;
+                                }
+                                if holds_line(text)
+                                    && let Some(entry) = Entry::of(text, offset)
+                                {
+                                    into.push(entry);
+                                }
+                                true
+                            })
+                        };
+                        let mut newer = Vec::new();
+                        collect(&mut newer, end, stamp.len)?;
+                        if done.get() {
+                            collect(&mut entries, 0, stop)?;
+                        }
+                        if !torn {
+                            newer.append(&mut entries);
+                            self.write_read_index(id, index, &path, &stamp, newer);
+                        }
                     }
                 }
             }

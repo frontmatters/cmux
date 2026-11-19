@@ -321,9 +321,8 @@ fn a_segment_begun_before_the_index_reads_its_older_part_the_old_way() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// A page that stops part way through a segment with no index leaves that segment unindexed, and
-/// a page that passes a whole one indexes it: the next page there reads only the index and its
-/// records.
+/// A page over segments with no index indexes each segment it reads in, the one it stops in too
+/// (its rest read by heads, once): the next page there reads only the index and its records.
 #[test]
 fn a_read_that_passes_a_segment_with_no_index_indexes_it() {
     let root = temp_root("transcript-index-lazy");
@@ -373,6 +372,28 @@ fn a_read_that_passes_a_segment_with_no_index_indexes_it() {
             read <= 64 * 1024 + 8 * page_bytes + index_bytes,
             "the page read {read} bytes for its {page_bytes} (index {index_bytes})"
         );
+    }
+    // A page that stops part way through a segment with no index indexes it whole: the next
+    // page in it reads only its records.
+    std::fs::remove_dir_all(index_dir(&sessions)).unwrap();
+    let args =
+        PageArgs { before: Some(last / 3), limit: 3, max_bytes: Some(1 << 20), filter: &filter };
+    let first = args.read(&hub);
+    assert_eq!(first, old.page(&args));
+    assert!(!index_files(&sessions).is_empty(), "the segment the page stopped in is indexed");
+    // Between the records the first page read: in segments it read in.
+    let args = PageArgs {
+        before: first.0.last().map(|r| r.seq),
+        limit: 1,
+        max_bytes: Some(1 << 20),
+        filter: &filter,
+    };
+    let r0 = read_bytes();
+    let page = args.read(&hub);
+    let read = read_bytes() - r0;
+    assert_eq!(page, old.page(&args));
+    if cfg!(target_os = "linux") {
+        assert!(read <= 64 * 1024, "the next page in it read {read} bytes");
     }
     let _ = std::fs::remove_dir_all(&root);
 }
