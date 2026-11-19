@@ -935,6 +935,9 @@ try {
         perfRow({ name: `chat_open.${arm}.${stage}`, p50: median(pick), p95: median(pick), target, version: 2 });
       // The page's own work in units of this runner's speed: each round's attach_to_latest over that round's calibration
       // (runnerCalibration.ts), the median of them. It holds across runners where the ms row above tracks the runner.
+      console.log(
+        `attach_to_latest per round (ms): ${rounds.map((r) => (r.latest - r.attach).toFixed(0)).join(" ")}; attach ms: ${rounds.map((r) => r.attach.toFixed(0)).join(" ")}`,
+      );
       const perRunner = perCalibration(
         rounds.map((r) => r.latest - r.attach),
         calibrations,
